@@ -1021,7 +1021,7 @@ function buildHand(C, sx, fist) {
   if (C.face.indexOf('ring') >= 0 && sx < 0) H.put(new THREE.TorusGeometry(0.0135, 0.004, 5, 10), 0xc9a24a, [0.03, -0.1, -0.006], [Math.PI / 2 + 0.35, 0, 0]);
   const m = H.mesh(); m.castShadow = true; return m;
 }
-function buildAvatar(chIdx, self) {
+function buildAvatarCode(chIdx, self) {
   const C = CHARS[chIdx % 8], bw = C.bw, root = new THREE.Group(), rig = new THREE.Group(); root.add(rig);
   const sleeve = C.sleeve || C.coat, dark = 0x15100c, has = f => C.face.indexOf(f) >= 0, sk = C.skin;
   const R = y => profR(C.build, y) * bw, tz = y => R(y) * 0.8;
@@ -1137,7 +1137,7 @@ function buildAvatar(chIdx, self) {
     const mk = (m, x, y, z) => { m.position.set(x, y, z); head.add(m); return m; };
     const browC = bearded || has('moustache') || C.hair ? C.hairC : dark, bt = has('brows') ? 1.7 : 1;
     const brow = s => { const b = new Merger(); b.put(sph(0.04, 10, 6), browC, [0, 0, 0], [0, 0, s * 0.12], [1, 0.22 * bt, 0.35]); return mk(b.mesh(), s * 0.064, 0.094, EZ + 0.014); };
-    av.browL = brow(-1); av.browR = brow(1);
+    av.browL = brow(-1); av.browR = brow(1); av.browY = 0.094;
     const Lm = new Merger(), lt = C.lips === 0x8a4a3c ? 0.62 : 1; Lm.put(sph(0.04, 12, 8), C.lips, [0, 0.007 * lt, 0], null, [1, 0.26 * lt, 0.4]); Lm.put(sph(0.036, 12, 8), shade(C.lips, 1.12), [0, -0.008 * lt, 0.001], null, [1, 0.3 * lt, 0.42]); Lm.put(box(0.066, 0.004, 0.02), 0x2a0f0c, [0, 0, 0.008]);
     av.mouth = mk(Lm.mesh(), 0, -0.092, mouthZ);
     const Ld = new Merger(), lidC = has('lashes') ? mixHex(sk, 0x4a3a5a, 0.35) : shade(sk, 0.9);
@@ -1177,6 +1177,74 @@ function buildAvatar(chIdx, self) {
   return av;
 }
 
+/* ----- Modèles sculptés sous Blender, livrés en pièces articulées (chars.js) ----- */
+const MODEL_GEO = {};
+const VCD = new THREE.MeshPhongMaterial({ vertexColors: true, side: THREE.DoubleSide, shininess: 14, specular: 0x181512 });
+function b64(s, Type) { const bin = atob(s), n = bin.length, u8 = new Uint8Array(n); for (let i = 0; i < n; i++) u8[i] = bin.charCodeAt(i); return new Type(u8.buffer); }
+function modelGeo(idx, part) {
+  const key = idx + ':' + part;
+  if (MODEL_GEO[key] !== undefined) return MODEL_GEO[key];
+  const Mo = window.BC_MODELS && window.BC_MODELS[idx], P = Mo && Mo.parts[part];
+  if (!P) { MODEL_GEO[key] = null; return null; }
+  const q = b64(P.p, Int16Array), pos = new Float32Array(q.length);
+  for (let i = 0; i < q.length; i++) pos[i] = q[i] / 20000;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(b64(P.n, Int8Array), 3, true));
+  g.setAttribute('color', new THREE.BufferAttribute(b64(P.c, Uint8Array), 3, true));
+  g.setIndex(new THREE.BufferAttribute(P.w === 2 ? b64(P.i, Uint16Array) : b64(P.i, Uint32Array), 1));
+  g.computeBoundingSphere(); g.userData.shared = 1; MODEL_GEO[key] = g; return g;
+}
+function partMesh(idx, part) { const g = modelGeo(idx, part); if (!g) return null; const m = new THREE.Mesh(g, VCD); m.castShadow = true; return m; }
+function buildChair() {
+  const B = new Merger(), wood = 0x2b1d13;
+  [-1, 1].forEach(s => B.put(cyl(0.024, 0.028, 0.86, 8), wood, [s * 0.24, 0.9, -0.3], [-0.06, 0, 0]));
+  B.put(box(0.54, 0.09, 0.045), wood, [0, 1.3, -0.325]); [-0.12, 0, 0.12].forEach(x => B.put(box(0.05, 0.7, 0.02), shade(wood, 1.2), [x, 0.92, -0.305], [-0.06, 0, 0]));
+  B.put(box(0.52, 0.055, 0.5), wood, [0, 0.5, -0.05]);
+  [[-0.23, -0.27], [0.23, -0.27], [-0.23, 0.17], [0.23, 0.17]].forEach(l => B.put(cyl(0.024, 0.02, 0.5, 6), 0x241710, [l[0], 0.25, l[1]]));
+  const m = B.mesh(); m.castShadow = true; return m;
+}
+function buildAvatarModel(chIdx, self) {
+  const Mo = window.BC_MODELS[chIdx], root = new THREE.Group(), rig = new THREE.Group(); root.add(rig);
+  const av = { ch: chIdx, self: !!self, model: true, root, rig, anim: null, hitT: -9, hitDir: 1, note: '', noteT: -9, lastYaw: 0, labelKey: '', blinkAt: -9, nextBlink: rnd(1, 5), lid: Mo.lid, browY: 0,
+    cur: { ax: -0.55, ae: -0.75, ay: 0, az: 0, aw: 0, bx: -0.55, be: -0.75, by: 0, bz: 0, bt: 0, hx: 0, hy: 0, hz: 0, tilt: 0, lunge: 0, dy: 0, mouth: 1, brow: 0 } };
+  if (!self) {
+    rig.add(buildChair());
+    const body = partMesh(chIdx, 'body'); if (body) rig.add(body);
+    const hpv = Mo.parts.head.piv, head = new THREE.Group(); head.position.set(hpv[0], hpv[1], hpv[2]); rig.add(head);
+    const sub = part => { const m = partMesh(chIdx, part); if (!m) return null; const p = Mo.parts[part].piv; m.position.set(p[0] - hpv[0], p[1] - hpv[1], p[2] - hpv[2]); head.add(m); return m; };
+    sub('head');
+    av.browL = sub('browR') || new THREE.Group(); av.browR = sub('browL') || new THREE.Group(); av.browY = av.browL.position.y;
+    av.mouth = sub('mouth') || new THREE.Group(); av.lids = sub('lids') || new THREE.Group(); av.lids.rotation.x = Mo.lid;
+    av.hat = sub('hat');
+    av.dunce = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.46, 16), M(0xf1e8d4)); av.dunce.position.set(0, 0.62, 0); av.dunce.visible = false; head.add(av.dunce);
+    av.pCigM = new THREE.Mesh(PROP.cig, VB); av.pCigM.position.set(Mo.cig[0], Mo.cig[1], Mo.cig[2]); av.pCigM.rotation.set(0.2, 0.32, 0); av.pCigM.visible = false; head.add(av.pCigM);
+    av.head = head;
+    av.label = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, sizeAttenuation: false })); av.label.scale.set(0.3, 0.075, 1); av.label.position.set(0, 2.1, 0); root.add(av.label);
+    av.hit = new THREE.Mesh(HIT_GEO, VC); av.hit.position.y = 1.25; av.hit.visible = false; root.add(av.hit);
+  }
+  const mkArm = (sx, sfx) => {
+    const sh = new THREE.Group(); sh.position.set(sx * Mo.shx, Mo.shy, 0.005); sh.rotation.order = 'YXZ'; rig.add(sh);
+    const u = partMesh(chIdx, 'ua' + sfx); if (u) sh.add(u);
+    const el = new THREE.Group(); el.position.set(0, -0.32, 0); sh.add(el);
+    const f = partMesh(chIdx, 'fa' + sfx); if (f) el.add(f);
+    const hand = new THREE.Group(); hand.position.set(0, -0.3, 0); el.add(hand);
+    const open = partMesh(chIdx, 'ha' + sfx) || new THREE.Group(); hand.add(open);
+    return { sh, el, hand, open };
+  };
+  const r = mkArm(-1, 'R'), l = mkArm(1, 'L');
+  av.shR = r.sh; av.elR = r.el; av.haR = r.hand; av.shL = l.sh; av.elL = l.el; av.haL = l.hand; av.openR = r.open;
+  av.fistR = partMesh(chIdx, 'fist') || new THREE.Group(); av.fistR.visible = false; av.haR.add(av.fistR);
+  const prop = (geo, mat, x, y, z) => { const o = new THREE.Mesh(geo, mat); o.position.set(x, y, z); o.visible = false; av.haR.add(o); return o; };
+  av.pGlass = prop(PROP.glass, glassMat, 0, -0.085, -0.05);
+  av.pCigH = prop(PROP.cig, VB, 0.012, -0.118, -0.035);
+  av.pCards = prop(PROP.cards, VC, 0, -0.06, 0);
+  return av;
+}
+function buildAvatar(chIdx, self) {
+  chIdx = chIdx % 8;
+  return window.BC_MODELS && window.BC_MODELS[chIdx] ? buildAvatarModel(chIdx, self) : buildAvatarCode(chIdx, self);
+}
 function disposeTree(root) {
   root.traverse(o => {
     if (o.geometry && !o.geometry.userData.shared) o.geometry.dispose();
@@ -1268,7 +1336,7 @@ function updateAvatar(av, t, dt) {
   av.head.rotation.set(c.hx, c.hy, c.hz);
   av.pCigM.visible = smoking && !inHand;
   av.mouth.scale.x = c.mouth; av.mouth.rotation.z = 0.3 * (c.mouth - 1);
-  av.browL.rotation.z = c.brow; av.browR.rotation.z = -c.brow; av.browL.position.y = av.browR.position.y = 0.094 - Math.abs(c.brow) * 0.012;
+  av.browL.rotation.z = -c.brow; av.browR.rotation.z = c.brow; av.browL.position.y = av.browR.position.y = av.browY - Math.max(0, c.brow) * 0.014;
   if (t > av.nextBlink) { av.blinkAt = t; av.nextBlink = t + rnd(2.2, 6); }
   const bl = t - av.blinkAt < 0.17 ? Math.sin((t - av.blinkAt) / 0.17 * PI) : 0;
   av.lids.rotation.x = lerp(av.lid + Math.max(0, c.brow) * 0.45 + (c.mouth - 1) * 0.2, 1.45, bl);
@@ -2066,8 +2134,10 @@ function snap(i, w, h, ang, far) {
   pScene.remove(av.root); disposeTree(av.root);
   return url;
 }
-CHARS.forEach((C, i) => { PORTRAITS[i] = snap(i, 176, 192, 0.18); });
-renderer.setPixelRatio(curPR);
+function makePortraits() { CHARS.forEach((C, i) => { PORTRAITS[i] = snap(i, 176, 192, 0.18); }); renderer.setPixelRatio(curPR); }
+makePortraits();
+/* Les modèles Blender arrivent après le démarrage : on remplace alors les personnages provisoires. */
+window.BC_onModels = () => { makePortraits(); resize(); rebuildAvatars(); syncGlasses(); renderUI(); };
 
 /* ================= BOUCLE ================= */
 let yawC = 0, pitchC = 0, alarmBurst = -99, lastT = performance.now(), fAcc = 0, fN = 0, warm = 0;
@@ -2131,5 +2201,6 @@ frame();
 })();
 
 </script>
+<script src="chars.js" async></script>
 </body>
 </html>
